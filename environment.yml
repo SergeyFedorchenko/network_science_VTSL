@@ -1,0 +1,22 @@
+name: network_science
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - polars
+  - pyarrow
+  - numpy
+  - scipy
+  - python-igraph
+  - leidenalg
+  - matplotlib
+  - seaborn
+  - scikit-learn
+  - gensim
+  - pyyaml
+  - pytest
+  - tqdm
+  - pip
+  - pip:
+    - cairocffi  # for igraph plotting on Windows

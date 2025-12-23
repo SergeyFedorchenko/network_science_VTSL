@@ -9,10 +9,16 @@ __pycache__/
 *.pyd
 env/
 venv/
+.pytest_cache/
 
 # Jupyter Notebook
 .ipynb_checkpoints
 
 # Data files
-data/united_flights/united_flights.csv
+*.csv
+*.parquet
+
+# Output files
+results/
+
 

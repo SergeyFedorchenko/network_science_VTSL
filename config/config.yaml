@@ -1,0 +1,87 @@
+# Network Science Project Configuration
+# WS1: Data Validation and Network Construction
+
+seed: 42
+
+data:
+  cleaned_path: "data/cleaned/flights_2025.parquet"
+  format: "parquet"
+
+filters:
+  year: 2025
+  include_cancelled: false
+  carriers: "ALL"  # or list like ["AA", "DL", "UA"]
+
+time_features:
+  hhmm_columns: ["DEP_TIME", "ARR_TIME"]
+  midnight_roll_rule: "arr_lt_dep_add_1day_if_air_time_positive"
+
+airport_network:
+  directed: true
+  edge_weight: "flight_count"
+  edge_metrics:
+    - "mean_dep_delay"
+    - "mean_arr_delay"
+    - "cancel_rate"
+    - "mean_distance"
+
+flight_graph:
+  scope:
+    mode: "top_airports"  # "full" | "top_airports" | "sample"
+    top_airports_k: 50
+    sample_frac: 0.10
+  edges:
+    include_tail_sequence: true
+    include_same_route_knn: true
+    route_knn_k: 3
+    include_airport_transfer_knn: false
+    airport_transfer_knn_k: 2
+    transfer_same_carrier_only: true
+    transfer_window_minutes: [30, 240]
+
+multilayer:
+  layer_key: "OP_UNIQUE_CARRIER"
+  include_interlayer_transfer_edges: false
+
+analysis:
+  centrality:
+    measures: ["degree", "betweenness", "pagerank"]
+    betweenness_approx_cutoff: 20000
+  communities:
+    method: "leiden_cpm"
+    leiden:
+      objective: "CPM"
+      resolution: 0.01
+      n_runs: 10
+    sbm_optional:
+      enabled: false
+  robustness:
+    strategies: ["random", "highest_degree", "highest_betweenness"]
+    random_trials: 30
+    recompute_betweenness_every: 10
+  delay_propagation:
+    model: "SIR"
+    beta: 0.25
+    gamma: 0.50
+    delay_threshold_minutes: 15
+    initial_seed_strategy: "top_k_outdegree"
+    top_k: 50
+    monte_carlo_runs: 200
+    use_empirical_beta: true
+  embeddings:
+    method: "node2vec"
+    dimensions: 128
+    walk_length: 80
+    num_walks: 10
+    window_size: 10
+    p: 1.0
+    q: 1.0
+  link_prediction:
+    time_split:
+      train_months: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+      test_months: [10, 11, 12]
+    negative_ratio: 5
+    classifier: "logreg"
+
+outputs:
+  overwrite: false

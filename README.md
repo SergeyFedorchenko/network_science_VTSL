@@ -1,48 +1,160 @@
-# Flight Operations Dataset (2025)
+# Network Science: US Flight Network Analysis (2025)
 
-This repository contains airline flight operations records for 2025 (monthly extracts merged into a single tabular dataset). Each row represents **one operated (or scheduled) flight leg** for a specific flight date, including origin/destination, carrier identifiers, timings, delays, cancellations, and distance.
+Master's final project analyzing the US flight network using advanced network science methods.
 
-## Files
+**Team Size:** 4 members  
+**Workstream (WS1):** Data Validation & Network Construction  
+**Stack:** Python 3.13 + Polars + python-igraph + leidenalg
 
-- **Data file(s):**
-  - `*.csv` (example structure shown below)
-  - Columns are consistent across monthly extracts and can be concatenated to form a full-year dataset.
+---
 
-## Data Schema
+## Project Overview
 
-**Delimiter:** comma (`,`)  
-**Header:** present  
-**Row granularity:** one row per flight leg per day
+This project analyzes one year (2025) of US flight data to build and compare three network representations:
 
-### Columns
+1. **Airport Network** - Nodes are airports, edges are routes
+2. **Flight Network** - Nodes are individual flights, edges capture temporal/operational dependencies
+3. **Multilayer Network** - Airline-specific layers with optional inter-layer connections
 
-| Column | Type (suggested) | Description |
-|---|---:|---|
-| `YEAR` | int | Calendar year of the flight date (e.g., `2025`). |
-| `MONTH` | int | Month number (1–12) of the flight date. |
-| `FL_DATE` | date | Flight date (local to reporting standard), formatted as `YYYY-MM-DD`. |
-| `OP_UNIQUE_CARRIER` | string | Unique operating carrier code (e.g., `AA`). |
-| `TAIL_NUM` | string | Aircraft tail number (registration), if available (e.g., `N101NN`). |
-| `OP_CARRIER_FL_NUM` | int | Operating carrier flight number. |
-| `ORIGIN_AIRPORT_ID` | int | Numeric airport identifier for origin airport. |
-| `ORIGIN` | string | Origin airport IATA code (e.g., `LAX`). |
-| `ORIGIN_CITY_NAME` | string | Origin city and state (e.g., `Los Angeles, CA`). |
-| `ORIGIN_STATE_NM` | string | Origin state name (e.g., `California`). |
-| `DEST` | string | Destination airport IATA code (e.g., `BOS`). |
-| `DEST_CITY_NAME` | string | Destination city and state (e.g., `Boston, MA`). |
-| `DEST_STATE_NM` | string | Destination state name (e.g., `Massachusetts`). |
-| `DEP_TIME` | float/int | Actual departure time in local time as `HHMM` (e.g., `828` for 08:28). May be null/blank. |
-| `DEP_DELAY` | float | Departure delay in minutes. Negative values indicate early departure. |
-| `ARR_TIME` | float/int | Actual arrival time in local time as `HHMM` (e.g., `1617` for 16:17). May roll past midnight. |
-| `ARR_DELAY` | float | Arrival delay in minutes. Negative values indicate early arrival. |
-| `CANCELLED` | float/int | Cancellation indicator (`1` = cancelled, `0` = not cancelled). |
-| `AIR_TIME` | float | Time in the air in minutes. Typically null/blank if cancelled. |
-| `FLIGHTS` | float/int | Flight count field (commonly `1` per record). Useful for aggregation. |
-| `DISTANCE` | float | Route distance in miles. |
+### Advanced Methods
 
-## Example Records
+- **Community Detection:** Leiden algorithm with CPM objective
+- **Robustness Analysis:** Percolation under targeted/random node removal
+- **Delay Propagation:** SIR-based contagion modeling on flight graph
+- **Graph Embeddings:** node2vec + link prediction
+- **Business Metrics:** Hub concentration, disruption costs
 
-```csv
-YEAR,MONTH,FL_DATE,OP_UNIQUE_CARRIER,TAIL_NUM,OP_CARRIER_FL_NUM,ORIGIN_AIRPORT_ID,ORIGIN,ORIGIN_CITY_NAME,ORIGIN_STATE_NM,DEST,DEST_CITY_NAME,DEST_STATE_NM,DEP_TIME,DEP_DELAY,ARR_TIME,ARR_DELAY,CANCELLED,AIR_TIME,FLIGHTS,DISTANCE
-2025,4,2025-04-01,AA,N101NN,12,12892,LAX,"Los Angeles, CA",California,BOS,"Boston, MA",Massachusetts,828.0,-7.0,1617.0,-50.0,0.0,269.0,1.0,2611.0
-2025,4,2025-04-01,AA,N101NN,1578,10721,BOS,"Boston, MA",Massachusetts,LAX,"Los Angeles, CA",California,1753.0,-7.0,2135.0,-8.0,0.0,380.0,1.0,2611.0
+---
+
+## Quick Start (WS1)
+
+### 1. Environment Setup
+
+```powershell
+conda env create -f environment.yml
+conda activate network_science
+```
+
+### 2. Data Preparation
+
+Place your dataset at: `data/cleaned/flights_2025.parquet`
+
+See [data/README.md](data/README.md) for schema requirements.
+
+### 3. Run Pipeline
+
+```powershell
+# Validate data
+python scripts/00_validate_inputs.py
+
+# Build airport network
+python scripts/01_build_airport_network.py
+
+# Build flight network
+python scripts/02_build_flight_network.py
+```
+
+---
+
+## Repository Structure
+
+```
+.
+├── config/config.yaml       # Central configuration
+├── src/
+│   ├── utils/              # Seeds, logging, manifests
+│   ├── io/                 # Data loading, validation, time features
+│   └── networks/           # Airport & flight network construction
+├── scripts/                # Executable pipeline scripts
+├── tests/                  # Unit tests + toy dataset
+└── results/                # All outputs (networks, logs, tables)
+```
+
+---
+
+## Testing
+
+```powershell
+# Generate toy dataset
+python tests/fixtures/generate_toy_data.py
+
+# Run all tests
+pytest tests/ -v
+```
+
+---
+
+## Output Files
+
+**After script 01:**
+- `results/networks/airport_nodes.parquet` - Airport nodes
+- `results/networks/airport_edges.parquet` - Route edges with metrics
+
+**After script 02:**
+- `results/networks/flight_nodes.parquet` - Flight nodes (scoped)
+- `results/networks/flight_edges.parquet` - Tail sequence + route kNN edges
+
+All scripts write run manifests to `results/logs/` for reproducibility.
+
+---
+
+## Key Features
+
+### Performance
+- Polars LazyFrame for memory efficiency
+- No O(n²) edge creation
+- Configurable scoping for flight graph
+
+### Reproducibility
+- Global seed control
+- Run manifests with git commit tracking
+- Idempotent scripts
+
+### Scalability
+- Handles millions of flights
+- Top-K airport scoping
+- Parquet columnar storage
+
+---
+
+## Configuration
+
+Key settings in [config/config.yaml](config/config.yaml):
+
+```yaml
+seed: 42
+data:
+  cleaned_path: "data/cleaned/flights_2025.parquet"
+filters:
+  year: 2025
+  include_cancelled: false
+flight_graph:
+  scope:
+    mode: "top_airports"
+    top_airports_k: 50
+  edges:
+    include_tail_sequence: true
+    route_knn_k: 3
+```
+
+---
+
+## Next Steps
+
+WS2-4 will implement:
+- Centrality & communities (scripts 04-05)
+- Robustness & delay propagation (scripts 06-07)
+- Embeddings, link prediction, business metrics, figures (scripts 08-10)
+
+---
+
+## References
+
+- Project instructions: `.vscode/copilot-instructions.md`
+- Polars: https://pola-rs.github.io/polars/
+- python-igraph: https://igraph.org/python/
+
+---
+
+**Version:** 1.0.0 (WS1 Complete)  
+**Last Updated:** December 2025
