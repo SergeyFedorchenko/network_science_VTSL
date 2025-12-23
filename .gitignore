@@ -1,0 +1,18 @@
+
+# IDE 
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+env/
+venv/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Data files
+data/united_flights/united_flights.csv
+
