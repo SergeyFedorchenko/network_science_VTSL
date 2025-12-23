@@ -1,10 +1,8 @@
 # Network Science: US Flight Network Analysis (2025)
 
-Master's final project analyzing the US flight network using advanced network science methods.
-
 **Team Size:** 4 members  
 **Workstream (WS1):** Data Validation & Network Construction  
-**Stack:** Python 3.13 + Polars + python-igraph + leidenalg
+**Stack:** Python 3.11 + Polars + python-igraph + leidenalg
 
 ---
 
