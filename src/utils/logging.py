@@ -58,6 +58,26 @@ def setup_logger(
     return logger
 
 
+def setup_logging(log_file: Path, level: int = logging.INFO) -> None:
+    """
+    Setup root logger for a script.
+    
+    Args:
+        log_file: Path to log file
+        level: Logging level (default: INFO)
+    """
+    # Configure root logger
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s | %(name)s | %(levelname)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler(log_file, mode='a', encoding='utf-8')
+        ]
+    )
+
+
 def get_script_logger(script_name: str, results_dir: Path) -> logging.Logger:
     """
     Get a logger for a script with automatic file path under results/logs/.
