@@ -755,13 +755,29 @@ def main():
     set_global_seed(config.get("seed", 42))
     
     # Create robustness config
+    robustness_config = config.get("analysis", {}).get("robustness", {})
+    
+    # Map strategy names: config has "random", "highest_degree", "highest_betweenness"
+    # Script uses "degree", "strength", "betweenness"
+    config_strategies = robustness_config.get("strategies", ["degree", "betweenness"])
+    targeted_strategies = []
+    for s in config_strategies:
+        if s == "random":
+            continue  # random is not a targeted strategy
+        elif s == "highest_degree":
+            targeted_strategies.append("degree")
+        elif s == "highest_betweenness":
+            targeted_strategies.append("betweenness")
+        elif s in ["degree", "betweenness", "strength"]:
+            targeted_strategies.append(s)
+    
     rob_cfg = RobustnessConfig(
-        n_runs_random=config.get("analysis", {}).get("robustness", {}).get("n_runs_random", 300),
+        n_runs_random=robustness_config.get("random_trials", 30),  # FIX: use correct key
         random_seed=config.get("seed", 42),
-        connectivity_mode=config.get("analysis", {}).get("robustness", {}).get("mode", "weak"),
-        targeted_strategies=tuple(config.get("analysis", {}).get("robustness", {}).get("strategies", ["degree", "strength"])),
-        k_values=tuple(config.get("analysis", {}).get("robustness", {}).get("k_values", [1, 5, 10, 20, 50])),
-        save_dir=str(root / "results" / "robustness"),
+        connectivity_mode=robustness_config.get("mode", "weak"),
+        targeted_strategies=tuple(targeted_strategies),
+        k_values=tuple(robustness_config.get("k_values", [1, 5, 10, 20, 50])),
+        save_dir=str(root / "results" / "analysis"),  # FIX: use standard output dir
     )
     
     # Create output directory
@@ -824,20 +840,162 @@ def main():
     # ========================================
     # Save Results
     # ========================================
-    output_path = Path(rob_cfg.save_dir) / "robustness_summary.json"
+    
+    # Create output directories
+    analysis_dir = root / "results" / "analysis"
+    tables_dir = root / "results" / "tables"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate robustness_curves.parquet (figure-ready table)
+    logger.info("Generating robustness_curves.parquet...")
+    curves_data = []
+    
+    for graph_name, graph_results in summary["results"].items():
+        # Determine n0 for this graph
+        if graph_name == "airport" and 'g_airport' in locals():
+            n0 = g_airport.vcount()
+        elif graph_name == "flight" and 'g_flight' in locals():
+            n0 = g_flight.vcount()
+        else:
+            n0 = 1  # fallback
+        
+        # Random removal
+        if "random" in graph_results:
+            rand = graph_results["random"]
+            x_vals = rand["x_removed"]
+            mean_vals = rand["mean_lcc_frac"]
+            std_vals = rand["std_lcc_frac"]
+            
+            for x, mean, std in zip(x_vals, mean_vals, std_vals):
+                curves_data.append({
+                    "graph": graph_name,
+                    "strategy": "random",
+                    "fraction_removed": float(x) / n0 if n0 > 0 else 0.0,
+                    "lcc_fraction": float(mean),
+                    "lcc_std": float(std) if std is not None else None,
+                })
+        
+        # Targeted removal
+        if "targeted" in graph_results:
+            for strategy, strat_data in graph_results["targeted"].items():
+                x_vals = strat_data["x_removed"]
+                lcc_vals = strat_data["lcc_frac"]
+                
+                for x, lcc in zip(x_vals, lcc_vals):
+                    curves_data.append({
+                        "graph": graph_name,
+                        "strategy": f"targeted_{strategy}",
+                        "fraction_removed": float(x) / n0 if n0 > 0 else 0.0,
+                        "lcc_fraction": float(lcc),
+                        "lcc_std": None,
+                    })
+    
+    if curves_data:
+        curves_df = pl.DataFrame(curves_data)
+        curves_path = analysis_dir / "robustness_curves.parquet"
+        curves_df.write_parquet(curves_path)
+        logger.info(f"Wrote {curves_path} ({len(curves_data)} rows)")
+    
+    # Generate robustness_critical_nodes.csv
+    logger.info("Generating robustness_critical_nodes.csv...")
+    critical_nodes_data = []
+    
+    for graph_name, graph_results in summary["results"].items():
+        if "targeted" not in graph_results:
+            continue
+        
+        # Get the graph object
+        g = None
+        if graph_name == "airport" and 'g_airport' in locals():
+            g = g_airport
+        elif graph_name == "flight" and 'g_flight' in locals():
+            g = g_flight
+        
+        if g is None:
+            continue
+        
+        for strategy, strat_data in graph_results["targeted"].items():
+            if "critical_k" not in strat_data:
+                continue
+            
+            # Get removal order for this strategy
+            removal_order = rank_nodes_by_strategy(g, strategy, logger, seed=rob_cfg.random_seed)
+            
+            for k_str, metrics in strat_data["critical_k"].items():
+                k = int(k_str)
+                top_k_nodes = removal_order[:min(k, len(removal_order))]
+                
+                # Get node codes if available
+                if "code" in g.vs.attributes():
+                    codes = [g.vs[v]["code"] for v in top_k_nodes[:20]]
+                else:
+                    codes = [str(v) for v in top_k_nodes[:20]]
+                
+                critical_nodes_data.append({
+                    "graph": graph_name,
+                    "strategy": strategy,
+                    "k": k,
+                    "nodes": ",".join(codes),
+                    "lcc_frac_after_removal": float(metrics["lcc_frac_of_original"]),
+                })
+    
+    if critical_nodes_data:
+        critical_df = pl.DataFrame(critical_nodes_data)
+        critical_path = tables_dir / "robustness_critical_nodes.csv"
+        critical_df.write_csv(critical_path)
+        logger.info(f"Wrote {critical_path} ({len(critical_nodes_data)} rows)")
+    
+    # Save summary JSON
+    output_path = analysis_dir / "robustness_summary.json"
     with open(output_path, "w") as f:
         json.dump(summary, f, indent=2)
     logger.info(f"Saved results to {output_path}")
     
     # Write manifest
+    manifest = {
+        "script": "06_run_robustness.py",
+        "timestamp": datetime.now().isoformat(),
+        "git_commit": get_git_commit(),
+        "config_snapshot": {
+            "seed": config.get("seed"),
+            "robustness": config.get("analysis", {}).get("robustness", {}),
+        },
+        "inputs": {},
+        "outputs": {
+            "curves_parquet": str(analysis_dir / "robustness_curves.parquet"),
+            "critical_nodes_csv": str(tables_dir / "robustness_critical_nodes.csv"),
+            "summary_json": str(output_path),
+        },
+        "results_summary": {},
+    }
+    
+    # Add input fingerprints
+    if airport_nodes_path.exists():
+        manifest["inputs"]["airport_network"] = {
+            "nodes_path": str(airport_nodes_path),
+            "edges_path": str(airport_edges_path),
+            "n_nodes": g_airport.vcount() if 'g_airport' in locals() else 0,
+            "n_edges": g_airport.ecount() if 'g_airport' in locals() else 0,
+        }
+    
+    if flight_nodes_path.exists():
+        manifest["inputs"]["flight_network"] = {
+            "nodes_path": str(flight_nodes_path),
+            "edges_path": str(flight_edges_path),
+            "n_nodes": g_flight.vcount() if 'g_flight' in locals() else 0,
+            "n_edges": g_flight.ecount() if 'g_flight' in locals() else 0,
+        }
+    
+    # Add results summary
+    for graph_name in summary["results"].keys():
+        manifest["results_summary"][graph_name] = {
+            "strategies_run": list(summary["results"][graph_name].get("targeted", {}).keys()),
+        }
+    
     manifest_path = log_dir / "06_run_robustness_manifest.json"
     with open(manifest_path, "w") as f:
-        json.dump({
-            "script": "06_run_robustness.py",
-            "timestamp": datetime.now().isoformat(),
-            "results_dir": rob_cfg.save_dir,
-            "summary_file": str(output_path),
-        }, f, indent=2)
+        json.dump(manifest, f, indent=2)
     logger.info(f"Wrote manifest: {manifest_path}")
     
     logger.info("=" * 80)

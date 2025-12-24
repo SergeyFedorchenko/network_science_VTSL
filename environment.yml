@@ -18,8 +18,5 @@ dependencies:
   - pytest
   - tqdm
   - pip
-  - igraph
-  - networkx
-  - pandas
   - pip:
     - cairocffi  # for igraph plotting on Windows

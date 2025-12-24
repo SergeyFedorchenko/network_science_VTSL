@@ -60,14 +60,17 @@ analysis:
     random_trials: 30
     recompute_betweenness_every: 10
   delay_propagation:
-    model: "SIR"
-    beta: 0.25
-    gamma: 0.50
+    model: "IC"  # Independent Cascade (IC) - appropriate for delay propagation
+    beta: 0.25    # Transmission probability for passenger connections (p_pax)
+    p_tail: 0.60  # Transmission probability for aircraft rotations (higher)
+    gamma: 0.50   # Not used in IC model (kept for reference)
     delay_threshold_minutes: 15
     initial_seed_strategy: "top_k_outdegree"
     top_k: 50
     monte_carlo_runs: 200
     use_empirical_beta: true
+    min_conn_minutes: 30
+    max_conn_minutes: 240
   embeddings:
     method: "node2vec"
     dimensions: 128

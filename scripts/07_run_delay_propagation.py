@@ -53,6 +53,84 @@ class DelayConfig:
     save_dir: str = "outputs/delay"
 
 
+def compute_empirical_beta(
+    flights_df: pl.DataFrame, 
+    threshold: float, 
+    logger: logging.Logger
+) -> Optional[float]:
+    """
+    Compute empirical transmission probability from data.
+    
+    For tail edges: P(flight i+1 has ARR_DELAY >= threshold | flight i has ARR_DELAY >= threshold)
+    
+    Args:
+        flights_df: DataFrame with tail, ARR_DELAY, CANCELLED, dep_ts columns
+        threshold: Delay threshold in minutes
+        logger: Logger instance
+        
+    Returns:
+        Empirical beta value or None if insufficient data
+    """
+    logger.info(f"Computing empirical beta from data (threshold={threshold} min)...")
+    
+    # Check for required columns
+    required = ["tail", "ARR_DELAY", "dep_ts"]
+    missing = [c for c in required if c not in flights_df.columns]
+    if missing:
+        logger.warning(f"Missing columns for empirical beta: {missing}; using config value")
+        return None
+    
+    # Filter to flights with tail numbers, non-cancelled, valid delays
+    filters = [
+        pl.col("tail").is_not_null(),
+        pl.col("ARR_DELAY").is_not_null(),
+        pl.col("dep_ts").is_not_null(),
+    ]
+    
+    # Add CANCELLED filter if column exists
+    if "CANCELLED" in flights_df.columns:
+        filters.append(pl.col("CANCELLED") == 0)
+    
+    tail_flights = flights_df.filter(pl.all_horizontal(filters)).sort("dep_ts")
+    
+    if len(tail_flights) == 0:
+        logger.warning("No flights with tail numbers found; using config value")
+        return None
+    
+    # Group by tail and check consecutive flights
+    n_current_delayed = 0
+    n_both_delayed = 0
+    
+    for tail_group in tail_flights.group_by("tail", maintain_order=True):
+        # Handle polars version differences
+        if isinstance(tail_group, tuple) and len(tail_group) == 2:
+            _, group_df = tail_group
+        else:
+            group_df = tail_group
+        
+        group_df = group_df.sort("dep_ts")
+        delays = group_df["ARR_DELAY"].to_list()
+        
+        for i in range(len(delays) - 1):
+            current_delayed = delays[i] >= threshold
+            next_delayed = delays[i+1] >= threshold
+            
+            if current_delayed:
+                n_current_delayed += 1
+                if next_delayed:
+                    n_both_delayed += 1
+    
+    if n_current_delayed == 0:
+        logger.warning("No delayed flights found for empirical beta; using config value")
+        return None
+    
+    empirical_beta = n_both_delayed / n_current_delayed
+    logger.info(f"Empirical beta: {empirical_beta:.4f} ({n_both_delayed}/{n_current_delayed} transitions)")
+    logger.info(f"  This represents P(next delayed | current delayed) on tail edges")
+    
+    return empirical_beta
+
+
 def get_git_commit() -> str:
     """Get current git commit hash."""
     try:
@@ -570,16 +648,19 @@ def main():
     logger.info(f"Loaded config from {config_path}")
     set_global_seed(config.get("seed", 42))
     
+    # Read delay propagation config
+    delay_config = config.get("analysis", {}).get("delay_propagation", {})
+    
     # Create delay config
     delay_cfg = DelayConfig(
-        p_pax=config.get("analysis", {}).get("delay", {}).get("p_pax", 0.30),
-        p_tail=config.get("analysis", {}).get("delay", {}).get("p_tail", 0.60),
-        min_conn_minutes=config.get("analysis", {}).get("delay", {}).get("min_conn_minutes", 30),
-        max_conn_minutes=config.get("analysis", {}).get("delay", {}).get("max_conn_minutes", 240),
-        n_runs=config.get("analysis", {}).get("delay", {}).get("n_runs", 500),
+        p_pax=delay_config.get("beta", 0.25),  # Map beta -> p_pax
+        p_tail=delay_config.get("p_tail", 0.60),
+        min_conn_minutes=delay_config.get("min_conn_minutes", 30),
+        max_conn_minutes=delay_config.get("max_conn_minutes", 240),
+        n_runs=delay_config.get("monte_carlo_runs", 200),  # FIX: use correct key
         rng_seed=config.get("seed", 42),
-        delay_threshold_minutes=config.get("analysis", {}).get("delay", {}).get("delay_threshold", 1.0),
-        save_dir=str(root / "results" / "delay"),
+        delay_threshold_minutes=float(delay_config.get("delay_threshold_minutes", 15.0)),
+        save_dir=str(root / "results" / "analysis"),  # FIX: standard path
     )
     
     # Create output directory
@@ -597,17 +678,77 @@ def main():
     
     logger.info("Loading flight nodes and edges...")
     base_flights_df = pl.read_parquet(flight_nodes_path)
-    flights_df = base_flights_df if "vertex_id" in base_flights_df.columns else base_flights_df.with_row_index(name="vertex_id")
     
-    # Load flight graph
+    # Filter to non-cancelled flights if column exists
+    if "CANCELLED" in base_flights_df.columns:
+        flights_df = base_flights_df.filter(pl.col("CANCELLED") == 0)
+        logger.info(f"Filtered to {len(flights_df):,} non-cancelled flights (from {len(base_flights_df):,} total)")
+    else:
+        flights_df = base_flights_df
+        logger.info(f"Loaded {len(flights_df):,} flights")
+    
+    # Ensure vertex_id column exists
+    if "vertex_id" not in flights_df.columns:
+        flights_df = flights_df.with_row_index(name="vertex_id")
+    
+    # Compute empirical beta if requested
+    if delay_config.get("use_empirical_beta", False):
+        empirical = compute_empirical_beta(
+            flights_df, 
+            delay_cfg.delay_threshold_minutes,
+            logger
+        )
+        if empirical is not None:
+            logger.info(f"Replacing config p_tail={delay_cfg.p_tail:.3f} with empirical {empirical:.3f}")
+            # Create new config with empirical value
+            delay_cfg = DelayConfig(
+                p_pax=delay_cfg.p_pax,
+                p_tail=empirical,  # Use empirical value
+                min_conn_minutes=delay_cfg.min_conn_minutes,
+                max_conn_minutes=delay_cfg.max_conn_minutes,
+                n_runs=delay_cfg.n_runs,
+                rng_seed=delay_cfg.rng_seed,
+                delay_threshold_minutes=delay_cfg.delay_threshold_minutes,
+                save_dir=delay_cfg.save_dir,
+            )
+    
+    # Load flight graph from WS1 outputs instead of rebuilding
+    logger.info("Loading flight graph from WS1 outputs...")
     edges_df = pl.read_parquet(flight_edges_path)
+    
+    # Filter for propagation-relevant edge types
+    propagation_edges = edges_df.filter(
+        pl.col("edge_type").is_in(["tail_next_leg", "route_knn"])
+    )
+    
+    logger.info(f"Using {len(propagation_edges):,} edges from WS1 graph (from {len(edges_df):,} total)")
+    logger.info(f"Edge type distribution: {propagation_edges['edge_type'].value_counts()}")
+    
     n_flights = len(flights_df)
+    logger.info(f"Building igraph with {n_flights:,} vertices...")
     
-    logger.info(f"Loaded {n_flights:,} flights and {len(edges_df):,} edges")
+    # Build igraph
+    edge_list = list(zip(
+        propagation_edges["src_id"].to_list(), 
+        propagation_edges["dst_id"].to_list()
+    ))
     
-    # Build connection graph from flight data
-    logger.info("Building flight connection graph for delay propagation...")
-    g = build_flight_connection_graph(flights_df, delay_cfg, logger)
+    g = ig.Graph(n=n_flights, edges=edge_list, directed=True)
+    
+    # Set transmission probabilities by edge type
+    edge_types = propagation_edges["edge_type"].to_list()
+    g.es["edge_type"] = edge_types
+    g.es["p"] = [
+        delay_cfg.p_tail if et == "tail_next_leg" else delay_cfg.p_pax 
+        for et in edge_types
+    ]
+    
+    # Copy flight metadata to vertices
+    for col in ["carrier", "origin", "dest", "dep_ts", "arr_ts"]:
+        if col in flights_df.columns:
+            g.vs[col] = flights_df[col].to_list()
+    
+    logger.info(f"Loaded flight graph: N={g.vcount():,}, E={g.ecount():,}")
     
     # Run analysis
     summary = {
@@ -624,21 +765,109 @@ def main():
     analysis_results = run_delay_propagation(flights_df, g, delay_cfg, logger)
     summary["results"] = analysis_results
     
-    # Save results
-    output_path = Path(delay_cfg.save_dir) / "delay_propagation_summary.json"
+    # ========================================
+    # Generate Required Output Files
+    # ========================================
+    analysis_dir = root / "results" / "analysis"
+    tables_dir = root / "results" / "tables"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate delay_cascades.parquet
+    logger.info("Generating delay_cascades.parquet...")
+    cascades_data = []
+    
+    # Baseline random shocks
+    if "baseline_random_shocks" in analysis_results:
+        baseline = analysis_results["baseline_random_shocks"]
+        for run_id, size in enumerate(baseline["cascade_sizes"]):
+            cascades_data.append({
+                "run_id": run_id,
+                "scenario": "baseline_random",
+                "cascade_size": size,
+                "fraction_delayed": size / g.vcount() if g.vcount() > 0 else 0.0,
+                "seed_size": int(0.01 * g.vcount()),  # 1% initial seeds
+            })
+    
+    # Scenario cascades (if present)
+    if "scenario_atl_hub_disruption" in analysis_results:
+        scenario = analysis_results["scenario_atl_hub_disruption"]
+        # ATL scenario doesn't have individual run data in current implementation
+        # Just document it was run
+        pass
+    
+    if cascades_data:
+        cascades_df = pl.DataFrame(cascades_data)
+        cascades_path = analysis_dir / "delay_cascades.parquet"
+        cascades_df.write_parquet(cascades_path)
+        logger.info(f"Wrote {cascades_path} ({len(cascades_data)} rows)")
+    
+    # Generate delay_superspreaders.csv
+    if "super_spreaders" in analysis_results:
+        logger.info("Generating delay_superspreaders.csv...")
+        spreaders = analysis_results["super_spreaders"]["top_20"]
+        
+        # Enrich with flight metadata
+        spreaders_enriched = []
+        for item in spreaders:
+            fid = item["flight_id"]
+            if fid < g.vcount():
+                vertex = g.vs[fid]
+                spreaders_enriched.append({
+                    "rank": item["rank"],
+                    "flight_id": fid,
+                    "influence_score": item["influence_score"],
+                    "carrier": vertex.get("carrier", ""),
+                    "origin": vertex.get("origin", ""),
+                    "dest": vertex.get("dest", ""),
+                    "dep_ts": str(vertex.get("dep_ts", "")),
+                })
+        
+        if spreaders_enriched:
+            spreaders_df = pl.DataFrame(spreaders_enriched)
+            spreaders_path = tables_dir / "delay_superspreaders.csv"
+            spreaders_df.write_csv(spreaders_path)
+            logger.info(f"Wrote {spreaders_path} ({len(spreaders_enriched)} rows)")
+    
+    # Save summary JSON
+    output_path = analysis_dir / "delay_propagation_summary.json"
     with open(output_path, "w") as f:
         json.dump(summary, f, indent=2, default=str)
     logger.info(f"Saved results to {output_path}")
     
-    # Write manifest
+    # Write complete manifest
+    manifest = {
+        "script": "07_run_delay_propagation.py",
+        "timestamp": datetime.now().isoformat(),
+        "git_commit": get_git_commit(),
+        "config_snapshot": {
+            "seed": config.get("seed"),
+            "delay_propagation": delay_config,
+        },
+        "inputs": {
+            "flight_network": {
+                "nodes_path": str(flight_nodes_path),
+                "edges_path": str(flight_edges_path),
+                "n_flights": g.vcount(),
+                "n_connections": g.ecount(),
+            },
+        },
+        "outputs": {
+            "cascades_parquet": str(cascades_path) if cascades_data else None,
+            "superspreaders_csv": str(spreaders_path) if "super_spreaders" in analysis_results else None,
+            "summary_json": str(output_path),
+        },
+        "parameters": {
+            "p_pax": delay_cfg.p_pax,
+            "p_tail": delay_cfg.p_tail,
+            "n_runs": delay_cfg.n_runs,
+            "delay_threshold": delay_cfg.delay_threshold_minutes,
+        },
+    }
+    
     manifest_path = log_dir / "07_run_delay_propagation_manifest.json"
     with open(manifest_path, "w") as f:
-        json.dump({
-            "script": "07_run_delay_propagation.py",
-            "timestamp": datetime.now().isoformat(),
-            "results_dir": delay_cfg.save_dir,
-            "summary_file": str(output_path),
-        }, f, indent=2)
+        json.dump(manifest, f, indent=2)
     logger.info(f"Wrote manifest: {manifest_path}")
     
     logger.info("=" * 80)
