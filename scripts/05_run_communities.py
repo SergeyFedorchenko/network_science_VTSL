@@ -26,6 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from analysis.centrality import load_airport_graph_from_parquet
 from analysis.community import (
+    is_sbm_available,
+    run_sbm_community_detection,
     select_best_partition,
     summarize_communities_airport,
     summarize_communities_flight,
@@ -247,6 +249,50 @@ def main():
         }
         
         logger.info(f"Wrote {len(airport_output_paths)} airport output files")
+        
+        # ========================================
+        # Optional: SBM community detection
+        # ========================================
+        sbm_config = config.get("analysis", {}).get("communities", {}).get("sbm_optional", {})
+        if sbm_config.get("enabled", False):
+            if is_sbm_available():
+                logger.info("\n" + "-" * 40)
+                logger.info("Running optional SBM community detection on airport network...")
+                logger.info("-" * 40)
+                
+                try:
+                    sbm_membership, sbm_run_log = run_sbm_community_detection(
+                        g=airport_g,
+                        config=config,
+                        weights=weight_col,
+                        seed=seed,
+                    )
+                    
+                    logger.info(f"SBM communities: {sbm_run_log['n_communities']} communities")
+                    
+                    # Build membership DataFrame
+                    sbm_membership_df = pl.DataFrame({
+                        "vertex_id": list(range(airport_g.vcount())),
+                        "community_id": sbm_membership,
+                    })
+                    
+                    # Write SBM outputs
+                    sbm_output_path = analysis_dir / "airport_sbm_membership.parquet"
+                    if not sbm_output_path.exists() or overwrite:
+                        sbm_membership_df.write_parquet(sbm_output_path)
+                        logger.info(f"Wrote SBM membership: {sbm_output_path}")
+                    
+                    manifest["outputs"]["airport_sbm"] = {
+                        "paths": {"membership": str(sbm_output_path)},
+                        "n_communities": sbm_run_log["n_communities"],
+                        "run_log": sbm_run_log,
+                    }
+                except Exception as e:
+                    logger.error(f"SBM community detection failed: {e}")
+                    manifest["outputs"]["airport_sbm"] = {"error": str(e)}
+            else:
+                logger.warning("SBM enabled in config but graspologic not installed")
+                manifest["outputs"]["airport_sbm"] = {"error": "graspologic not installed"}
     else:
         logger.warning("Airport network outputs not found; skipping airport communities")
         logger.warning(f"Expected: {airport_nodes_path}, {airport_edges_path}")

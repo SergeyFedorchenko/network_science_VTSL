@@ -394,3 +394,128 @@ def plot_top_route_predictions(
     plt.close()
 
     logger.info(f"Saved top route predictions plot: {output_path}")
+
+
+def plot_robustness_curves(
+    robustness_data: dict,
+    output_path: str | Path,
+    graph_type: str = "airport",
+) -> None:
+    """
+    Plot robustness/percolation curves.
+
+    Parameters
+    ----------
+    robustness_data : dict
+        Dictionary with 'random', 'degree', 'betweenness' keys, each containing
+        'x_removed' and 'mean_lcc_frac' (or 'lcc_fractions')
+    output_path : str or Path
+        Path to save figure
+    graph_type : str
+        'airport' or 'flight' (for title)
+    """
+    logger.info(f"Plotting robustness curves for {graph_type} network")
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    colors = {'random': 'blue', 'degree': 'red', 'betweenness': 'green'}
+    labels = {'random': 'Random Removal', 'degree': 'Targeted (Degree)', 'betweenness': 'Targeted (Betweenness)'}
+    
+    for strategy in ['random', 'degree', 'betweenness']:
+        if strategy not in robustness_data:
+            continue
+        
+        data = robustness_data[strategy]
+        x = data.get('x_removed', [])
+        
+        # Handle different key names
+        if 'mean_lcc_frac' in data:
+            y = data['mean_lcc_frac']
+        elif 'lcc_fractions' in data:
+            y = data['lcc_fractions']
+        else:
+            continue
+        
+        # Normalize x to fraction if needed
+        if x and max(x) > 1:
+            total = x[-1] + (x[1] - x[0]) if len(x) > 1 else x[-1]
+            x_frac = [xi / total for xi in x]
+        else:
+            x_frac = x
+        
+        ax.plot(x_frac, y, color=colors.get(strategy, 'gray'),
+                label=labels.get(strategy, strategy), linewidth=2, alpha=0.8)
+    
+    ax.set_xlabel("Fraction of Nodes Removed", fontsize=12)
+    ax.set_ylabel("LCC Fraction", fontsize=12)
+    ax.set_title(f"{graph_type.capitalize()} Network Robustness", fontsize=14)
+    ax.legend(loc='best')
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1.05])
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+    
+    logger.info(f"Saved robustness curves plot: {output_path}")
+
+
+def plot_delay_cascade_distribution(
+    cascade_sizes: list,
+    output_path: str | Path,
+    n_flights: int = None,
+) -> None:
+    """
+    Plot delay cascade size distribution.
+
+    Parameters
+    ----------
+    cascade_sizes : list
+        List of cascade sizes from Monte Carlo runs
+    output_path : str or Path
+        Path to save figure
+    n_flights : int, optional
+        Total number of flights (for normalization)
+    """
+    logger.info("Plotting delay cascade distribution")
+    
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    
+    # Left: Histogram of absolute cascade sizes
+    ax1 = axes[0]
+    ax1.hist(cascade_sizes, bins=50, alpha=0.7, edgecolor='k', linewidth=0.5, color='coral')
+    ax1.axvline(sum(cascade_sizes)/len(cascade_sizes), color='red', linestyle='--', 
+                label=f'Mean: {sum(cascade_sizes)/len(cascade_sizes):.0f}')
+    ax1.set_xlabel("Cascade Size (flights affected)", fontsize=12)
+    ax1.set_ylabel("Frequency", fontsize=12)
+    ax1.set_title("Delay Cascade Size Distribution", fontsize=14)
+    ax1.legend()
+    ax1.grid(True, alpha=0.3, axis='y')
+    
+    # Right: Fraction of network affected
+    ax2 = axes[1]
+    if n_flights:
+        fractions = [s / n_flights for s in cascade_sizes]
+        ax2.hist(fractions, bins=50, alpha=0.7, edgecolor='k', linewidth=0.5, color='steelblue')
+        ax2.axvline(sum(fractions)/len(fractions), color='blue', linestyle='--',
+                    label=f'Mean: {100*sum(fractions)/len(fractions):.1f}%')
+        ax2.set_xlabel("Fraction of Network Affected", fontsize=12)
+        ax2.set_ylabel("Frequency", fontsize=12)
+        ax2.set_title("Cascade Impact Distribution", fontsize=14)
+        ax2.legend()
+        ax2.grid(True, alpha=0.3, axis='y')
+    else:
+        # Just plot raw sizes again with log scale
+        ax2.hist(cascade_sizes, bins=50, alpha=0.7, edgecolor='k', linewidth=0.5, color='steelblue')
+        ax2.set_yscale('log')
+        ax2.set_xlabel("Cascade Size", fontsize=12)
+        ax2.set_ylabel("Frequency (log scale)", fontsize=12)
+        ax2.set_title("Cascade Size Distribution (Log Scale)", fontsize=14)
+        ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+    
+    logger.info(f"Saved delay cascade distribution plot: {output_path}")

@@ -897,8 +897,8 @@ def main():
         curves_df.write_parquet(curves_path)
         logger.info(f"Wrote {curves_path} ({len(curves_data)} rows)")
     
-    # Generate robustness_critical_nodes.csv
-    logger.info("Generating robustness_critical_nodes.csv...")
+    # Generate tbl03_robustness_critical_nodes.csv
+    logger.info("Generating tbl03_robustness_critical_nodes.csv...")
     critical_nodes_data = []
     
     for graph_name, graph_results in summary["results"].items():
@@ -942,7 +942,7 @@ def main():
     
     if critical_nodes_data:
         critical_df = pl.DataFrame(critical_nodes_data)
-        critical_path = tables_dir / "robustness_critical_nodes.csv"
+        critical_path = tables_dir / "tbl03_robustness_critical_nodes.csv"
         critical_df.write_csv(critical_path)
         logger.info(f"Wrote {critical_path} ({len(critical_nodes_data)} rows)")
     
@@ -964,7 +964,7 @@ def main():
         "inputs": {},
         "outputs": {
             "curves_parquet": str(analysis_dir / "robustness_curves.parquet"),
-            "critical_nodes_csv": str(tables_dir / "robustness_critical_nodes.csv"),
+            "critical_nodes_csv": str(tables_dir / "tbl03_robustness_critical_nodes.csv"),
             "summary_json": str(output_path),
         },
         "results_summary": {},

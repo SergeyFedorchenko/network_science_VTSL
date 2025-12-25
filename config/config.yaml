@@ -54,7 +54,7 @@ analysis:
       resolution: 0.01
       n_runs: 10
     sbm_optional:
-      enabled: false
+      enabled: true
   robustness:
     strategies: ["random", "highest_degree", "highest_betweenness"]
     random_trials: 30

@@ -3,9 +3,15 @@
 
 This file is the single source of truth for implementing the entire Network Science project. All teammates must follow it to keep schemas, outputs, and results consistent and reproducible.
 
+Authoritative references (do not guess when ambiguous):
+- Network_Science_Project_Proposal.pdf
+- requirements.pdf
+- readme.pdf (original dataset dictionary)
+- Lecture slides listed in the project plan
+
 Project facts:
 - Data already prepared (cleaned dataset is ready). We still implement validation checks and reproducibility packaging.
-- Analyze one year: 2025.
+- Analyze one year: 2024.
 - Build and compare:
   1) Baseline airport network (nodes = airports)
   2) Flight-centric network (nodes = flights)
@@ -24,7 +30,7 @@ Non-negotiables:
 
 ---
 
-## 1 Repository layout (must follow)
+## 1) Repository layout (must follow)
 
 /
   README.md
@@ -38,9 +44,7 @@ Non-negotiables:
   data/
     README.md
     cleaned/
-      flights_2024.parquet   (primary dataset - complete 2024)
-      flights_2025.parquet   (legacy - missing October)
-    2024/                      (source monthly CSV files)
+      flights_2024.parquet   (preferred)
   src/
     io/
       load_data.py
@@ -98,7 +102,7 @@ Non-negotiables:
 
 ---
 
-## 2 Engineering conventions (required)
+## 2) Engineering conventions (required)
 
 ### 2.1 Determinism
 - Implement `src/utils/seeds.py`:
@@ -127,7 +131,7 @@ Non-negotiables:
 
 ---
 
-## 3 Clean dataset contract (fixed schema)
+## 3) Clean dataset contract (fixed schema)
 
 The cleaned dataset has these columns:
 
@@ -160,8 +164,8 @@ Internal naming policy:
 - If a mapping is created, store it in `results/logs/schema_mapping.json`.
 
 ---
- 
-## 4 config/config.yaml (required keys)
+
+## 4) config/config.yaml (required keys)
 
 Minimum config keys:
 
@@ -224,14 +228,17 @@ analysis:
     random_trials: 30
     recompute_betweenness_every: 10
   delay_propagation:
-    model: "SIR"
-    beta: 0.25
-    gamma: 0.50
+    model: "IC"               # Independent Cascade (not SIR - no recovery needed for delay propagation)
+    beta: 0.25                # Base transmission probability for passenger connections (p_pax)
+    p_tail: 0.60              # Transmission probability for aircraft rotations (higher)
+    gamma: 0.50               # Not used in IC model (retained for reference only)
     delay_threshold_minutes: 15
     initial_seed_strategy: "top_k_outdegree"
     top_k: 50
     monte_carlo_runs: 200
     use_empirical_beta: true
+    min_conn_minutes: 30
+    max_conn_minutes: 240
   embeddings:
     method: "node2vec"
     dimensions: 128
@@ -252,7 +259,7 @@ outputs:
 
 ---
 
-## 5 Data validation and time features (polars)
+## 5) Data validation and time features (polars)
 
 ### 5.1 Validation (scripts/00_validate_inputs.py)
 Implement `src/io/validate_data.py`:
@@ -286,7 +293,7 @@ Write a unit test for HHMM conversion and midnight roll logic.
 
 ---
 
-## 6 Network construction (polars -> igraph)
+## 6) Network construction (polars -> igraph)
 
 All graphs must have stable vertex IDs. Use integer vertex indices internally in igraph and store mapping tables.
 
@@ -341,7 +348,7 @@ Because the dataset is huge, flight graph construction must be scope-limited via
 - mode=full: only if it fits.
 
 Edge types (must stay scalable):
-A. Tail sequence edges (recommended, high value for delay propagation)
+A) Tail sequence edges (recommended, high value for delay propagation)
 - For each TAIL_NUM (non-null), sort by dep_ts, connect consecutive legs:
   src = flight i, dst = flight i+1
 - Edge attributes:
@@ -355,7 +362,7 @@ Implement with polars:
 - create shifted columns per TAIL_NUM using `.over("TAIL_NUM")` and `shift(-1)`
 - filter where next_flight_id not null and next.dep_ts > dep_ts
 
-B. Same-route kNN edges (avoid cliques)
+B) Same-route kNN edges (avoid cliques)
 - For each route (ORIGIN, DEST), sort by dep_ts, connect each flight to next k flights.
 - edge_type="route_knn"
 - attribute: delta_dep_minutes
@@ -366,7 +373,7 @@ Implement with polars window:
 - unpivot to edges (src_id, dst_id) for j in 1..k
 - filter dst not null
 
-C. Airport transfer kNN edges (approximate feasible connections without exploding)
+C) Airport transfer kNN edges (approximate feasible connections without exploding)
 Goal: represent potential passenger/crew/bank connections at airports without a full range join.
 - For each airport and carrier (default same-carrier only), consider inbound arrivals and connect to the next k departures at that airport for that carrier.
 - edge_type="airport_transfer_knn"
@@ -416,7 +423,7 @@ Outputs:
 
 ---
 
-## 7 Analyses (igraph-first, polars for tabulation)
+## 7) Analyses (igraph-first, polars for tabulation)
 
 ### 7.1 Centrality (airport network primary)
 File: src/analysis/centrality.py
@@ -510,9 +517,11 @@ Empirical beta estimation (recommended):
   - beta_tail, beta_route, beta_transfer
 
 Simulation:
-- SIR:
-  - infected nodes attempt to infect outgoing neighbors with probability beta
-  - infected recover with probability gamma per step
+- Independent Cascade (IC):
+  - Each delayed flight attempts to "infect" (delay) outgoing neighbors
+  - Transmission probability: p_tail for aircraft rotations, p_pax for passenger connections
+  - No recovery phase needed (delays propagate once then stop)
+  - More appropriate than SIR for modeling delay cascades in flight networks
 - Run Monte Carlo with monte_carlo_runs.
 - Seed selection:
   - top-k outdegree nodes in flight graph, or top-k by observed ARR_DELAY, configurable
@@ -526,7 +535,7 @@ Write:
 
 ---
 
-## 8 Embeddings and link prediction (airport network)
+## 8) Embeddings and link prediction (airport network)
 
 ### 8.1 node2vec embeddings (igraph-based random walks)
 File: src/analysis/embeddings.py
@@ -567,7 +576,7 @@ Data leakage rule:
 
 ---
 
-## 9 Business module (polars-heavy, consumes analysis outputs)
+## 9) Business module (polars-heavy, consumes analysis outputs)
 
 File: src/business/*
 Script: scripts/09_run_business_module.py
@@ -600,7 +609,7 @@ Outputs:
 
 ---
 
-## 10 Figures and tables (report-ready, no recomputation)
+## 10) Figures and tables (report-ready, no recomputation)
 
 Script: scripts/10_make_all_figures.py
 All plots must read from results/analysis and results/business only.
@@ -625,7 +634,7 @@ Required tables:
 
 ---
 
-## 11 Pipeline execution order
+## 11) Pipeline execution order
 
 1) scripts/00_validate_inputs.py
 2) scripts/01_build_airport_network.py
@@ -649,7 +658,7 @@ Add a Makefile:
 
 ---
 
-## 12 Dependency set (environment.yml guidance)
+## 12) Dependency set (environment.yml guidance)
 
 Include at minimum:
 - python=3.11
@@ -673,7 +682,7 @@ If DC-SBM optional is enabled:
 
 ---
 
-## 13 Collaboration protocol (4 workstreams)
+## 13) Collaboration protocol (4 workstreams)
 
 WS1 Data validation + network construction:
 - Own: src/io, src/networks, scripts 00-03
@@ -701,7 +710,7 @@ Definition of done for any module:
 
 ---
 
-## 14 Prompt template for Claude Sonnet 4.5 (Cursor/Copilot)
+## 14) Prompt template for Claude Sonnet 4.5 (Cursor/Copilot)
 
 Use this exact template when requesting code:
 

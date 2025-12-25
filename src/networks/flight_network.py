@@ -288,6 +288,135 @@ def build_route_knn_edges(
     return edges
 
 
+def build_airport_transfer_knn_edges(
+    nodes: pl.DataFrame,
+    k: int = 2,
+    same_carrier_only: bool = True,
+    transfer_window_minutes: tuple = (30, 240)
+) -> pl.DataFrame:
+    """
+    Build edges connecting arriving flights to next k departing flights at same airport.
+    
+    Represents potential passenger/crew connections at airports.
+    Uses windowed polars operations to avoid O(n²) complexity.
+    
+    Args:
+        nodes: DataFrame with flight nodes
+        k: Number of next departures to connect to
+        same_carrier_only: If True, only connect flights of same carrier
+        transfer_window_minutes: (min, max) minutes for valid connection window
+        
+    Returns:
+        DataFrame with airport transfer kNN edges
+    """
+    min_window, max_window = transfer_window_minutes
+    logger.info(f"Building airport transfer kNN edges (k={k}, same_carrier={same_carrier_only}, "
+                f"window=[{min_window}, {max_window}] min)")
+    
+    # Filter to flights with valid arrival timestamps (arrivals) and departure timestamps (departures)
+    arrivals = nodes.filter(
+        pl.col("arr_ts").is_not_null()
+    ).select([
+        pl.col("flight_id").alias("arr_flight_id"),
+        pl.col("dest").alias("airport"),  # Arriving at this airport
+        pl.col("arr_ts"),
+        pl.col("carrier").alias("arr_carrier"),
+    ])
+    
+    departures = nodes.filter(
+        pl.col("dep_ts").is_not_null()
+    ).select([
+        pl.col("flight_id").alias("dep_flight_id"),
+        pl.col("origin").alias("airport"),  # Departing from this airport
+        pl.col("dep_ts"),
+        pl.col("carrier").alias("dep_carrier"),
+    ])
+    
+    # Group key depends on whether we restrict to same carrier
+    if same_carrier_only:
+        group_key = ["airport", "arr_carrier"]
+        # Sort departures by (airport, carrier, dep_ts)
+        departures = departures.sort(["airport", "dep_carrier", "dep_ts"])
+        arrivals = arrivals.sort(["airport", "arr_carrier", "arr_ts"])
+    else:
+        group_key = ["airport"]
+        departures = departures.sort(["airport", "dep_ts"])
+        arrivals = arrivals.sort(["airport", "arr_ts"])
+    
+    # For each airport (and carrier if same_carrier_only), we need to connect
+    # each arrival to the next k departures after its arrival time.
+    # 
+    # Strategy: Join arrivals and departures on airport, then filter by time window,
+    # rank departures after each arrival, and keep top k.
+    
+    # To keep this scalable, we use a windowed approach:
+    # 1. For each departure, compute a rank within (airport[, carrier], dep_ts)
+    # 2. For each arrival, find the rank of the first departure after arr_ts
+    # 3. Connect to ranks rank, rank+1, ..., rank+k-1
+    
+    # Add departure rank per group
+    if same_carrier_only:
+        departures = departures.with_columns([
+            pl.col("dep_ts").rank("ordinal").over(["airport", "dep_carrier"]).alias("dep_rank")
+        ])
+    else:
+        departures = departures.with_columns([
+            pl.col("dep_ts").rank("ordinal").over("airport").alias("dep_rank")
+        ])
+    
+    # Join arrivals with departures on airport (and carrier if applicable)
+    if same_carrier_only:
+        joined = arrivals.join(
+            departures.rename({"dep_carrier": "arr_carrier"}),  # Match carrier column
+            on=["airport", "arr_carrier"],
+            how="inner"
+        )
+    else:
+        joined = arrivals.join(
+            departures,
+            on="airport",
+            how="inner"
+        )
+    
+    # Calculate transfer slack (time between arrival and departure)
+    joined = joined.with_columns([
+        ((pl.col("dep_ts") - pl.col("arr_ts")).dt.total_minutes()).alias("transfer_slack_minutes")
+    ])
+    
+    # Filter to valid transfer window
+    joined = joined.filter(
+        (pl.col("transfer_slack_minutes") >= min_window) & 
+        (pl.col("transfer_slack_minutes") <= max_window)
+    )
+    
+    # Rank departures after each arrival (within the filtered set)
+    if same_carrier_only:
+        joined = joined.with_columns([
+            pl.col("transfer_slack_minutes").rank("ordinal").over(["arr_flight_id"]).alias("conn_rank")
+        ])
+    else:
+        joined = joined.with_columns([
+            pl.col("transfer_slack_minutes").rank("ordinal").over("arr_flight_id").alias("conn_rank")
+        ])
+    
+    # Keep top k connections per arrival
+    edges = joined.filter(pl.col("conn_rank") <= k)
+    
+    # Format as standard edge table
+    edges = edges.select([
+        pl.col("arr_flight_id").alias("src_id"),
+        pl.col("dep_flight_id").alias("dst_id"),
+        pl.lit("airport_transfer_knn").alias("edge_type"),
+        pl.col("transfer_slack_minutes").alias("ground_time_minutes"),
+        pl.lit(same_carrier_only).alias("same_carrier"),
+        pl.lit(None, dtype=pl.String).alias("tail")
+    ])
+    
+    logger.info(f"Created {len(edges)} airport transfer kNN edges")
+    
+    return edges
+
+
 def build_flight_network(
     lf: pl.LazyFrame,
     config: Dict[str, Any],
@@ -324,6 +453,19 @@ def build_flight_network(
         route_k = edges_config.get("route_knn_k", 3)
         route_edges = build_route_knn_edges(nodes, k=route_k)
         edge_dfs.append(route_edges)
+    
+    # Airport transfer kNN edges
+    if edges_config.get("include_airport_transfer_knn", False):
+        transfer_k = edges_config.get("airport_transfer_knn_k", 2)
+        same_carrier = edges_config.get("transfer_same_carrier_only", True)
+        window = edges_config.get("transfer_window_minutes", [30, 240])
+        transfer_edges = build_airport_transfer_knn_edges(
+            nodes, 
+            k=transfer_k,
+            same_carrier_only=same_carrier,
+            transfer_window_minutes=tuple(window)
+        )
+        edge_dfs.append(transfer_edges)
     
     # Combine all edges
     if not edge_dfs:

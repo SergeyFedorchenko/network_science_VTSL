@@ -79,7 +79,7 @@ def validate_constraints(lf: pl.LazyFrame, year: int) -> Dict[str, Any]:
     """
     # Compute validation metrics efficiently
     validation = lf.select([
-        pl.count().alias("total_rows"),
+        pl.len().alias("total_rows"),
         
         # Year validation
         (pl.col("YEAR") == year).sum().alias("year_matches"),
@@ -146,7 +146,7 @@ def validate_air_time_logic(lf: pl.LazyFrame) -> Dict[str, Any]:
         Dictionary with AIR_TIME validation results
     """
     air_time_check = lf.select([
-        pl.count().alias("total_rows"),
+        pl.len().alias("total_rows"),
         
         # Cancelled flights should have null AIR_TIME
         ((pl.col("CANCELLED") == 1) & pl.col("AIR_TIME").is_null()).sum().alias("cancelled_airtime_null"),

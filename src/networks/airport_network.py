@@ -115,8 +115,8 @@ def build_airport_edges(
     node_map = dict(zip(airport_nodes["code"], airport_nodes["node_id"]))
     
     edges = edges.with_columns([
-        pl.col("ORIGIN").replace(node_map, default=None).alias("src_id"),
-        pl.col("DEST").replace(node_map, default=None).alias("dst_id")
+        pl.col("ORIGIN").map_elements(lambda x: node_map.get(x), return_dtype=pl.Int64).alias("src_id"),
+        pl.col("DEST").map_elements(lambda x: node_map.get(x), return_dtype=pl.Int64).alias("dst_id")
     ])
     
     # Remove any edges with missing node mappings (shouldn't happen but safety check)

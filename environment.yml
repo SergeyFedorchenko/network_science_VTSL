@@ -20,3 +20,4 @@ dependencies:
   - pip
   - pip:
     - cairocffi  # for igraph plotting on Windows
+    - graspologic  # for SBM community detection
