@@ -6,7 +6,7 @@ from pathlib import Path
 
 # Input and output paths
 csv_path = Path("data/united_flights/united_flights.csv")
-parquet_path = Path("data/cleaned/flights_2025.parquet")
+parquet_path = Path("data/cleaned/flights_2024.parquet")
 
 print(f"Reading CSV from: {csv_path}")
 df = pl.read_csv(csv_path)

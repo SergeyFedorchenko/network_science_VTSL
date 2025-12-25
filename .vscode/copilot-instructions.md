@@ -38,7 +38,9 @@ Non-negotiables:
   data/
     README.md
     cleaned/
-      flights_2025.parquet   (preferred)
+      flights_2024.parquet   (primary dataset - complete 2024)
+      flights_2025.parquet   (legacy - missing October)
+    2024/                      (source monthly CSV files)
   src/
     io/
       load_data.py
@@ -166,11 +168,11 @@ Minimum config keys:
 seed: 42
 
 data:
-  cleaned_path: "data/cleaned/flights_2025.parquet"
+  cleaned_path: "data/cleaned/flights_2024.parquet"
   format: "parquet"
 
 filters:
-  year: 2025
+  year: 2024
   include_cancelled: false
   carriers: "ALL"              # or list like ["AA","DL"]
 

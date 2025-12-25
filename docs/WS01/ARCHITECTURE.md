@@ -10,7 +10,7 @@ INPUT DATA
 ══════════
 ┌──────────────────────────┐
 │  data/cleaned/           │
-│  flights_2025.parquet    │◄────── Place your dataset here
+│  flights_2024.parquet    │◄────── Place your dataset here (7.08M flights, all 12 months)
 │  (millions of rows)      │
 └──────────────────────────┘
             │

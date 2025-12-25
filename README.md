@@ -35,7 +35,7 @@ conda activate network_science
 
 ### 2. Data Preparation
 
-Place your dataset at: `data/cleaned/flights_2025.parquet`
+Place your dataset at: `data/cleaned/flights_2024.parquet`
 
 See [data/README.md](data/README.md) for schema requirements.
 
@@ -119,9 +119,9 @@ Key settings in [config/config.yaml](config/config.yaml):
 ```yaml
 seed: 42
 data:
-  cleaned_path: "data/cleaned/flights_2025.parquet"
+  cleaned_path: "data/cleaned/flights_2024.parquet"
 filters:
-  year: 2025
+  year: 2024
   include_cancelled: false
 flight_graph:
   scope:
@@ -223,6 +223,120 @@ WS3-4 will implement:
 
 ---
 
+## How to Run WS4 (Embeddings, Link Prediction, Business Analysis)
+
+### Prerequisites
+
+WS1-WS3 outputs must exist:
+- `results/networks/airport_nodes.parquet`, `airport_edges.parquet`
+- `results/analysis/airport_centrality.parquet` (WS2)
+- `data/cleaned/flights_2024.parquet` (complete 2024 data, 7.08M flights)
+- `data/cleaned/flights_2025.parquet` (legacy data, missing October)
+
+### Commands
+
+```powershell
+# Step 1: Train embeddings and run link prediction
+python scripts/08_run_embeddings_linkpred.py
+
+# Step 2: Compute business metrics (airline-level)
+python scripts/09_run_business_module.py
+
+# Step 3: Generate all final figures
+python scripts/10_make_all_figures.py
+```
+
+### WS4 Outputs
+
+**After script 08 (embeddings + link prediction):**
+- `results/analysis/airport_embeddings.parquet` - Node2vec embeddings (128-dim)
+- `results/analysis/linkpred_metrics.json` - AUC and avg precision for all models
+- `results/tables/airport_embedding_neighbors.csv` - Similar airports for major hubs
+- `results/tables/linkpred_top_predictions.csv` - Top 100 predicted new routes
+- `results/logs/08_run_embeddings_linkpred_manifest.json` - Run manifest
+
+**After script 09 (business analysis):**
+- `results/business/airline_summary_metrics.parquet` - Merged airline metrics
+- `results/business/hub_concentration.parquet` - Hub dependence per airline
+- `results/business/disruption_cost_proxy.parquet` - Delay/cancellation costs
+- `results/tables/airline_business_metrics.csv` - Report-ready table
+- `results/logs/09_run_business_module_manifest.json` - Run manifest
+
+**After script 10 (figures):**
+- `results/figures/fig06_hub_dependence_by_airline.png` - Top-1 vs top-3 hub concentration
+- `results/figures/fig07_connectivity_vs_delay_scatter.png` - Network centralization vs delays
+- `results/figures/fig08_link_prediction_performance.png` - Model comparison (AUC, avg precision)
+- `results/figures/fig09_top_route_predictions.png` - Top predicted new routes
+- `results/logs/10_make_all_figures_manifest.json` - Run manifest
+
+### Testing WS4
+
+```powershell
+# Run WS4-specific tests
+pytest tests/test_embeddings_small.py -v
+pytest tests/test_linkpred_time_split_toy.py -v
+pytest tests/test_business_metrics_toy.py -v
+```
+
+### Key Configuration (config.yaml)
+
+```yaml
+analysis:
+  embeddings:
+    method: "node2vec"
+    dimensions: 128
+    walk_length: 80
+    num_walks: 10
+    window_size: 10
+    p: 1.0  # Return parameter
+    q: 1.0  # In-out parameter
+  link_prediction:
+    time_split:
+      train_months: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+      test_months: [10, 11, 12]
+    negative_ratio: 5
+    classifier: "logreg"
+
+business:
+  cost_per_delay_minute: 75.0  # USD per minute
+  cost_per_cancellation: 10000.0  # USD per cancelled flight
+```
+
+### WS4 Data Leakage Prevention
+
+**Link Prediction Time-Split:**
+- Train graph: flights from months 1-9
+- Test positives: new routes appearing in months 10-12 (not in train)
+- Test negatives: sampled non-edges excluding all test positives
+- Embeddings trained only on train graph
+- No information from test period leaks into features or training
+
+### Business Metrics Explained
+
+**Operational Reliability:**
+- `mean_dep_delay`, `mean_arr_delay`: Average delays (excluding cancelled flights)
+- `cancellation_rate`: Fraction of cancelled flights
+- `flight_count`: Total flights operated
+
+**Network Strategy:**
+- `hub_top1_pct`: % of flights through primary hub
+- `hub_top3_pct`: % of flights through top-3 hubs
+- `primary_hub`: Airport with most flights
+- `primary_hub_pagerank`: PageRank centrality of primary hub (if WS2 available)
+
+**Disruption Cost Proxy:**
+- `delay_cost`: Sum of positive arrival delays × cost per minute
+- `cancellation_cost`: Count of cancellations × cost per cancellation
+- `total_cost`: Sum of delay and cancellation costs
+
+### Performance Notes
+
+- **Embeddings:** Node2vec walk generation is parallelizable; expect ~1-2 min for 300 airports
+- **Link prediction:** Negative sampling is efficient; candidate ranking limited to 1000 edges for speed
+- **Business metrics:** Polars lazy evaluation makes airline aggregation fast even on millions of flights
+
+---
+
 ## References
 
 - Project instructions: `.vscode/copilot-instructions.md`
@@ -231,5 +345,5 @@ WS3-4 will implement:
 
 ---
 
-**Version:** 1.1.0 (WS1 + WS2 Complete)  
+**Version:** 1.2.0 (WS1-WS4 Complete)  
 **Last Updated:** December 2025

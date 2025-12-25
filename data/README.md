@@ -3,7 +3,7 @@
 ## Structure
 
 - `cleaned/`: Cleaned flight data ready for analysis
-  - `flights_2025.parquet`: Main dataset for 2025 (YEAR=2025)
+  - `flights_2024.parquet`: Main dataset for 2024 (YEAR=2024)
   
 ## Dataset Schema
 
@@ -33,7 +33,7 @@ The cleaned dataset contains the following columns:
 
 ## Data Source
 
-The dataset should be placed in `data/cleaned/flights_2025.parquet`.
+The dataset should be placed in `data/cleaned/flights_2024.parquet`.
 
 ## Validation
 

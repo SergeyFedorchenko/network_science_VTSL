@@ -22,7 +22,7 @@
 ## Data Processing
 ### CSV to Parquet Conversion
 - **Input**: `data/united_flights/united_flights.csv` (865.43 MB)
-- **Output**: `data/cleaned/flights_2025.parquet` (120.47 MB)
+- **Output**: `data/cleaned/flights_2024.parquet` (148.43 MB, 7.08M flights)
 - **Compression Ratio**: 7.18x
 - **Rows**: 6,408,906
 - **Columns**: 21

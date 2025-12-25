@@ -4,11 +4,11 @@
 seed: 42
 
 data:
-  cleaned_path: "data/cleaned/flights_2025.parquet"
+  cleaned_path: "data/cleaned/flights_2024.parquet"
   format: "parquet"
 
 filters:
-  year: 2025
+  year: 2024
   include_cancelled: false
   carriers: "ALL"  # or list like ["AA", "DL", "UA"]
 
@@ -85,6 +85,10 @@ analysis:
       test_months: [10, 11, 12]
     negative_ratio: 5
     classifier: "logreg"
+
+business:
+  cost_per_delay_minute: 75.0  # USD per minute of arrival delay
+  cost_per_cancellation: 10000.0  # USD per cancelled flight
 
 outputs:
   overwrite: false
