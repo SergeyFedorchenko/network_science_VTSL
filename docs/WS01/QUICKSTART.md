@@ -28,7 +28,7 @@ python -c "import polars, igraph, leidenalg; print('✓ Ready!')"
 
 Place your cleaned dataset here:
 ```
-data/cleaned/flights_2025.parquet
+data/cleaned/flights_2024.parquet
 ```
 
 If you don't have data yet, use the toy dataset for testing:
