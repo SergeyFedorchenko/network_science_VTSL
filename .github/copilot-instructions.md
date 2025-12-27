@@ -20,7 +20,7 @@ lf = pl.scan_parquet(path).filter(...).select(...)  # CORRECT
 df = lf.collect()  # Only at final step
 ```
 
-### Script Template (see [scripts/01_build_airport_network.py](scripts/01_build_airport_network.py))
+### Script Template (see [scripts/01_build_airport_network.py](../scripts/01_build_airport_network.py))
 ```python
 sys.path.insert(0, str(Path(__file__).parent.parent))  # Import src/
 set_global_seed(config["seed"])                        # Immediately after loading config

@@ -18,7 +18,12 @@ venv/
 *.csv
 *.parquet
 
-# Output files
+# Logs
+*.log
+
+# Result files
 results/
 
-
+# Backup files
+*~
+*.backup
