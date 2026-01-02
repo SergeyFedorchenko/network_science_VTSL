@@ -27,3 +27,6 @@ results/
 # Backup files
 *~
 *.backup
+
+# OS files
+.DS_Store
