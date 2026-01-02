@@ -526,6 +526,8 @@ def run_delay_propagation(
     logger.info("=" * 80)
     
     cascade_sizes = []
+    baseline_cascades_detailed = []  # Track per-run aggregate
+    
     for run_id in range(cfg.n_runs):
         # Random seed: 1% of flights initially delayed
         k_seeds = max(1, int(0.01 * n_flights))
@@ -534,7 +536,18 @@ def run_delay_propagation(
         delayed, _ = simulate_delay_cascade(
             g, seeds, cfg.p_pax, cfg.p_tail, rng, logger, transitions=transitions
         )
-        cascade_sizes.append(len(delayed))
+        cascade_size = len(delayed)
+        cascade_sizes.append(cascade_size)
+        
+        # Store run-level data (no per-seed tracking for baseline to avoid millions of rows)
+        baseline_cascades_detailed.append({
+            "run_id": run_id,
+            "scenario": "baseline_random",
+            "seed_airport": "RANDOM_MIX",  # Placeholder for random seeds
+            "total_delay_impact": cascade_size,
+            "cascade_size": cascade_size,
+            "seed_size": k_seeds,
+        })
         
         if (run_id + 1) % max(1, cfg.n_runs // 10) == 0:
             logger.info(f"Random shocks: {run_id + 1}/{cfg.n_runs} runs")
@@ -544,6 +557,7 @@ def run_delay_propagation(
         "description": "1% of flights randomly delayed",
         "statistics": baseline_stats,
         "cascade_sizes": cascade_sizes,
+        "detailed_cascades": baseline_cascades_detailed,
     }
     
     logger.info(f"Baseline cascade size: mean={baseline_stats['mean_cascade_size']:.0f}, "
@@ -602,23 +616,101 @@ def run_delay_propagation(
         logger.info(f"Found {len(atl_flights)} flights departing ATL at 06:00")
         
         scenario_cascades = []
+        atl_cascades_detailed = []
+        
         for run_id in range(cfg.n_runs):
             delayed, _ = simulate_delay_cascade(
                 g, atl_flights, cfg.p_pax, cfg.p_tail, rng, logger, transitions=transitions
             )
-            scenario_cascades.append(len(delayed))
+            cascade_size = len(delayed)
+            scenario_cascades.append(cascade_size)
+            
+            # Track ATL as seed airport with total impact
+            atl_cascades_detailed.append({
+                "run_id": run_id,
+                "scenario": "atl_hub_disruption",
+                "seed_airport": "ATL",
+                "seed_flight_id": None,  # Multiple seed flights
+                "total_delay_impact": cascade_size,
+                "cascade_size": cascade_size,
+                "seed_size": len(atl_flights),
+            })
         
         scenario_stats = compute_cascade_statistics(scenario_cascades, n_flights)
         results["scenario_atl_hub_disruption"] = {
             "description": f"All {len(atl_flights)} flights departing ATL at 06:00 start delayed",
             "initial_delayed": len(atl_flights),
             "statistics": scenario_stats,
+            "detailed_cascades": atl_cascades_detailed,
         }
         
         logger.info(f"ATL 06:00 scenario: mean cascade={scenario_stats['mean_cascade_size']:.0f}, "
                     f"p99={scenario_stats['p99']:.0f}")
     else:
         logger.warning("No flights found departing ATL at 06:00; skipping scenario")
+    
+    # ========================================
+    # Airport Superspreader Analysis
+    # ========================================
+    logger.info("\n" + "=" * 80)
+    logger.info("Airport Superspreader Analysis (Top Airports)")
+    logger.info("=" * 80)
+    
+    # Identify top airports by flight count
+    airport_flight_counts = {}
+    for vid in range(g.vcount()):
+        origin = g.vs[vid].get("origin", None)
+        if origin:
+            airport_flight_counts[origin] = airport_flight_counts.get(origin, 0) + 1
+    
+    top_airports = sorted(airport_flight_counts.items(), key=lambda x: x[1], reverse=True)[:20]
+    logger.info(f"Testing top 20 airports for superspreader potential...")
+    
+    airport_superspreader_data = []
+    n_airport_runs = min(10, cfg.n_runs // 20)  # Limited runs per airport
+    
+    for rank, (airport, flight_count) in enumerate(top_airports, 1):
+        logger.info(f"  [{rank}/20] Testing {airport} ({flight_count:,} flights)")
+        
+        # Get all flights from this airport
+        airport_flight_ids = [
+            vid for vid in range(g.vcount()) 
+            if g.vs[vid].get("origin") == airport
+        ]
+        
+        if not airport_flight_ids:
+            continue
+        
+        # Sample subset if too many
+        if len(airport_flight_ids) > 100:
+            airport_flight_ids = list(rng.choice(airport_flight_ids, size=100, replace=False))
+        
+        # Run cascades with this airport's flights as seeds
+        cascade_impacts = []
+        for run_id in range(n_airport_runs):
+            delayed, _ = simulate_delay_cascade(
+                g, airport_flight_ids, cfg.p_pax, cfg.p_tail, rng, logger, transitions=transitions
+            )
+            cascade_impacts.append(len(delayed))
+        
+        mean_impact = np.mean(cascade_impacts)
+        
+        airport_superspreader_data.append({
+            "run_id": rank - 1,  # Use rank as pseudo run_id
+            "scenario": "airport_superspreader",
+            "seed_airport": airport,
+            "total_delay_impact": int(mean_impact),
+            "cascade_size": int(mean_impact),
+            "seed_size": len(airport_flight_ids),
+            "n_simulations": n_airport_runs,
+        })
+    
+    results["airport_superspreaders"] = {
+        "description": "Mean cascade size when all sampled flights from each airport are delayed",
+        "detailed_cascades": airport_superspreader_data,
+    }
+    
+    logger.info(f"Completed airport superspreader analysis for {len(airport_superspreader_data)} airports")
     
     return results
 
@@ -773,34 +865,60 @@ def main():
     analysis_dir.mkdir(parents=True, exist_ok=True)
     tables_dir.mkdir(parents=True, exist_ok=True)
     
-    # Generate delay_cascades.parquet
-    logger.info("Generating delay_cascades.parquet...")
+    # Generate delay_cascades.parquet with per-airport impacts
+    logger.info("Generating delay_cascades.parquet with per-airport impacts...")
     cascades_data = []
     
-    # Baseline random shocks
+    # Baseline random shocks - use detailed cascades
     if "baseline_random_shocks" in analysis_results:
         baseline = analysis_results["baseline_random_shocks"]
-        for run_id, size in enumerate(baseline["cascade_sizes"]):
-            cascades_data.append({
-                "run_id": run_id,
-                "scenario": "baseline_random",
-                "cascade_size": size,
-                "fraction_delayed": size / g.vcount() if g.vcount() > 0 else 0.0,
-                "seed_size": int(0.01 * g.vcount()),  # 1% initial seeds
-            })
+        if "detailed_cascades" in baseline:
+            for cascade in baseline["detailed_cascades"]:
+                cascades_data.append({
+                    "run_id": cascade["run_id"],
+                    "scenario": cascade["scenario"],
+                    "seed_airport": cascade["seed_airport"],
+                    "total_delay_impact": cascade["total_delay_impact"],
+                    "cascade_size": cascade["cascade_size"],
+                    "fraction_delayed": cascade["cascade_size"] / g.vcount() if g.vcount() > 0 else 0.0,
+                    "seed_size": cascade["seed_size"],
+                })
     
-    # Scenario cascades (if present)
+    # ATL scenario - use detailed cascades
     if "scenario_atl_hub_disruption" in analysis_results:
         scenario = analysis_results["scenario_atl_hub_disruption"]
-        # ATL scenario doesn't have individual run data in current implementation
-        # Just document it was run
-        pass
+        if "detailed_cascades" in scenario:
+            for cascade in scenario["detailed_cascades"]:
+                cascades_data.append({
+                    "run_id": cascade["run_id"],
+                    "scenario": cascade["scenario"],
+                    "seed_airport": cascade["seed_airport"],
+                    "total_delay_impact": cascade["total_delay_impact"],
+                    "cascade_size": cascade["cascade_size"],
+                    "fraction_delayed": cascade["cascade_size"] / g.vcount() if g.vcount() > 0 else 0.0,
+                    "seed_size": cascade["seed_size"],
+                })
+    
+    # Airport superspreader analysis
+    if "airport_superspreaders" in analysis_results:
+        airport_ss = analysis_results["airport_superspreaders"]
+        if "detailed_cascades" in airport_ss:
+            for cascade in airport_ss["detailed_cascades"]:
+                cascades_data.append({
+                    "run_id": cascade["run_id"],
+                    "scenario": cascade["scenario"],
+                    "seed_airport": cascade["seed_airport"],
+                    "total_delay_impact": cascade["total_delay_impact"],
+                    "cascade_size": cascade["cascade_size"],
+                    "fraction_delayed": cascade["cascade_size"] / g.vcount() if g.vcount() > 0 else 0.0,
+                    "seed_size": cascade["seed_size"],
+                })
     
     if cascades_data:
         cascades_df = pl.DataFrame(cascades_data)
         cascades_path = analysis_dir / "delay_cascades.parquet"
         cascades_df.write_parquet(cascades_path)
-        logger.info(f"Wrote {cascades_path} ({len(cascades_data)} rows)")
+        logger.info(f"Wrote {cascades_path} ({len(cascades_data)} rows with seed_airport + total_delay_impact)")
     
     # Generate delay_superspreaders.csv
     if "super_spreaders" in analysis_results:
