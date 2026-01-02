@@ -1,23 +1,34 @@
 name: network_science
 channels:
   - conda-forge
-  - defaults
 dependencies:
   - python=3.11
-  - polars
-  - pyarrow
+
+  # Core data/science stack
   - numpy
   - scipy
+  - pyarrow
+  - polars
+
+  # Graph stack
   - python-igraph
   - leidenalg
+  - graspologic
+  - graspologic-native
+
+  # Plotting
   - matplotlib
   - seaborn
+
+  # ML + NLP
   - scikit-learn
   - gensim
+
+  # Utilities
   - pyyaml
-  - pytest
   - tqdm
-  - pip
-  - pip:
-    - cairocffi  # for igraph plotting on Windows
-    - graspologic  # for SBM community detection
+  - pytest
+
+  # igraph Cairo bindings (Windows)
+  - cairo
+  - cairocffi

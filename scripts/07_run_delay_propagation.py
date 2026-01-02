@@ -658,8 +658,8 @@ def run_delay_propagation(
     
     # Identify top airports by flight count
     airport_flight_counts = {}
-    for vid in range(g.vcount()):
-        origin = g.vs[vid].get("origin", None)
+    origins = g.vs["origin"] if "origin" in g.vs.attributes() else []
+    for origin in origins:
         if origin:
             airport_flight_counts[origin] = airport_flight_counts.get(origin, 0) + 1
     
@@ -674,8 +674,8 @@ def run_delay_propagation(
         
         # Get all flights from this airport
         airport_flight_ids = [
-            vid for vid in range(g.vcount()) 
-            if g.vs[vid].get("origin") == airport
+            vid for vid, orig in enumerate(origins) 
+            if orig == airport
         ]
         
         if not airport_flight_ids:
