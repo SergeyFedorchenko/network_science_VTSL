@@ -19,6 +19,9 @@ venv/
 *.csv
 *.parquet
 
+# But include the cleaned 2024 dataset (tracked via Git LFS)
+!data/cleaned/flights_2024.parquet
+
 # Logs
 *.log
 .DS_Store
