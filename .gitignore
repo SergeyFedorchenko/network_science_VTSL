@@ -21,6 +21,7 @@ venv/
 
 # Logs
 *.log
+.DS_Store
 
 # Result files
 results/
