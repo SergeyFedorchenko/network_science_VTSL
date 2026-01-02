@@ -20,6 +20,9 @@ dependencies:
   - matplotlib
   - seaborn
 
+  # Data analysis (notebooks)
+  - pandas
+
   # ML + NLP
   - scikit-learn
   - gensim
@@ -28,7 +31,8 @@ dependencies:
   - pyyaml
   - tqdm
   - pytest
+  - jupyterlab
 
-  # igraph Cairo bindings (Windows)
+  # igraph Cairo bindings (cross-platform)
   - cairo
-  - cairocffi
+  - pycairo

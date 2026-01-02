@@ -1,79 +1,103 @@
 # AI Coding Agent Instructions
 
 ## Project Overview
-US flight network analysis: **polars** (data) + **python-igraph** (graphs) + **leidenalg** (community detection).  
-Data: `data/cleaned/flights_2024.parquet` (~7M flights). All params in `config/config.yaml`.
+US flight network analysis (~7M flights): **polars** (data) + **python-igraph** (graphs) + **leidenalg** (communities).  
+Data: `data/cleaned/flights_2024.parquet`. All parameters live in `config/config.yaml`.
+
+## Environment Setup
+```powershell
+conda env create -f environment.yml   # Creates 'network_science' env
+conda activate network_science
+```
+**Core dependencies:** Python 3.11, polars, python-igraph, leidenalg, graspologic, gensim, scikit-learn, matplotlib/seaborn
 
 ## Architecture
-Three network representations built in sequence:
+Three network representations built sequentially by scripts `01`-`03`:
 1. **Airport Network** – nodes=airports, edges=routes with aggregated metrics
-2. **Flight Network** – nodes=individual flights, edges=tail sequences + route kNN (scoped to top-50 airports)
+2. **Flight Network** – nodes=individual flights, edges=tail sequences + route kNN (scoped to top-50 airports by default)
 3. **Multilayer Network** – carrier-specific layers
 
-**Key modules:** `src/io/` (load/validate), `src/networks/` (graph construction), `src/analysis/` (metrics), `src/viz/` (figures)
+**Source layout:** `src/io/` (load/validate) → `src/networks/` (graph construction) → `src/analysis/` (centrality, community, robustness, embeddings) → `src/business/` (airline metrics) → `src/viz/` (figures)
+
+## Commands
+```powershell
+conda activate network_science   # Environment from environment.yml
+make all                         # Full pipeline (scripts 00-10)
+make tests                       # pytest tests/ -v
+make toy-data                    # Generate test fixtures
+```
+Scripts run independently: `python scripts/01_build_airport_network.py`
 
 ## Critical Patterns
 
-### Polars LazyFrame Always
+### 1. Polars LazyFrame Always
 ```python
-lf = pl.scan_parquet(path).filter(...).select(...)  # CORRECT
-df = lf.collect()  # Only at final step
+lf = pl.scan_parquet(path).filter(...).select(...)  # Lazy until...
+df = lf.collect()  # ...final step only
 ```
 
-### Script Template (see [scripts/01_build_airport_network.py](../scripts/01_build_airport_network.py))
+### 2. Script Template (see `scripts/01_build_airport_network.py`)
 ```python
 sys.path.insert(0, str(Path(__file__).parent.parent))  # Import src/
-set_global_seed(config["seed"])                        # Immediately after loading config
+set_global_seed(config["seed"])                        # First thing after loading config
 if output.exists() and not config["outputs"]["overwrite"]: sys.exit(0)  # Idempotent
-create_run_manifest(...)                               # Write to results/logs/
+create_run_manifest(...)                               # Write manifest to results/logs/
 ```
 
-### Flight Graph Edges – No O(n²)
+### 3. Flight Graph Edges – No O(n²)
+Use polars windowed ops instead of pairwise loops:
 ```python
-# Tail sequences: shift(-1).over("TAIL_NUM") after sorting by [TAIL_NUM, dep_ts]
+# Tail sequences: shift(-1).over("tail") after sorting by [tail, dep_ts]
 # Route kNN: shift(-j).over(["ORIGIN", "DEST"]) for j in 1..k
 ```
 
-### Midnight Roll for Overnight Flights
+### 4. Midnight Roll for Overnight Flights
 ```python
-# If arr_minutes < dep_minutes AND AIR_TIME > 0 → arrival is next day
 arr_ts = pl.when((col("arr_minutes") < col("dep_minutes")) & (col("AIR_TIME") > 0))
     .then(col("FL_DATE") + duration(days=1, minutes=col("arr_minutes")))
 ```
 
-### Leiden Community Detection
+### 5. Leiden Community Detection
 ```python
 partition = leidenalg.find_partition(g, leidenalg.CPMVertexPartition,
     resolution_parameter=config["analysis"]["communities"]["leiden"]["resolution"],
     seed=config["seed"], weights=g.es["weight"])
-# Run n_runs=10, select best quality score
+# Run n_runs=10 (config), select partition with best quality score
 ```
-
-## Commands
-```powershell
-conda activate network_science  # Environment from environment.yml
-make all       # Full pipeline (validate → networks → analysis → figures)
-make tests     # pytest tests/ -v
-make validate  # python scripts/00_validate_inputs.py
-```
-
-Analysis hyperparameters (IC model, node2vec, robustness strategies) are in `config/config.yaml` under `analysis.*`.
 
 ## Pipeline Order
 `00_validate_inputs` → `01_build_airport_network` → `02_build_flight_network` → `03_build_multilayer` → `04_run_centrality` → `05_run_communities` → `06_run_robustness` → `07_run_delay_propagation` → `08_run_embeddings_linkpred` → `09_run_business_module` → `10_make_all_figures`
 
+## Analysis Notebooks
+After pipeline runs, 10 Jupyter notebooks in `analysis/notebooks/` interpret outputs:
+- **Outputs:** `results/tables/report/nb##_*.csv` (30+ tables), `results/figures/report/nb##_*.png` (60+ figures)
+- **Workflow:** Run notebooks 01-10 in order; each reads pipeline artifacts and writes prefixed report files
+- **Key notebooks:** `03` (centrality rankings), `05` (robustness curves), `06` (delay superspreaders), `09` (cross-domain synthesis)
+
+See `analysis/RESULT_REPORT.md` for interpretation framework.
+
 ## Data Schema
-Required: `FL_DATE`, `OP_UNIQUE_CARRIER`, `TAIL_NUM`, `ORIGIN`, `DEST`, `DEP_TIME`, `ARR_TIME`, `DEP_DELAY`, `ARR_DELAY`, `CANCELLED`, `AIR_TIME`, `DISTANCE`  
-Generated: `dep_minutes`, `arr_minutes`, `dep_ts`, `arr_ts`
+**Required columns:** `FL_DATE`, `OP_UNIQUE_CARRIER`, `TAIL_NUM`, `ORIGIN`, `DEST`, `DEP_TIME`, `ARR_TIME`, `DEP_DELAY`, `ARR_DELAY`, `CANCELLED`, `AIR_TIME`, `DISTANCE`  
+**Generated by `add_time_features()`:** `dep_minutes`, `arr_minutes`, `dep_ts`, `arr_ts`
 
 ## Non-Negotiables
-- **Determinism**: `set_global_seed(42)` + run manifests for every script
+- **Determinism**: `set_global_seed(config["seed"])` + run manifests for every script
 - **Idempotent**: Check `config["outputs"]["overwrite"]` before regenerating
-- **Config-driven**: All parameters from `config/config.yaml`, never hardcode
+- **Config-driven**: All parameters from `config/config.yaml`, never hardcode values
 - **No O(n²)**: Flight edges via polars windowed ops only
 - **Outputs**: Write to `results/`, never modify `data/`
 
 ## Testing
-- Toy fixtures: `tests/fixtures/toy_flights.parquet`
-- Naming: `test_*_small.py` (integration), `test_*_toy.py` (unit)
-- Run: `pytest tests/ -v`
+```powershell
+pytest tests/ -v                 # All tests
+pytest tests/test_*_small.py -v  # Integration tests
+pytest tests/test_*_toy.py -v    # Unit tests with toy fixtures
+```
+Generate toy data: `python tests/fixtures/generate_toy_data.py`
+
+## Key Files
+- `src/utils/seeds.py` – `set_global_seed()` for reproducibility
+- `src/utils/paths.py` – `get_project_root()`, `get_config_path()`
+- `src/utils/manifests.py` – `create_run_manifest()` for provenance
+- `src/io/time_features.py` – `add_time_features()` with midnight roll logic
+- `src/networks/flight_network.py` – scalable edge creation patterns
