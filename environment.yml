@@ -1,8 +1,11 @@
 name: network_science
 channels:
   - conda-forge
+channel_priority: strict
+
 dependencies:
   - python=3.11
+  - pip
 
   # Core data/science stack
   - numpy
@@ -13,8 +16,8 @@ dependencies:
   # Graph stack
   - python-igraph
   - leidenalg
-  - graspologic
-  - graspologic-native
+  # graspologic: Install via pip for cross-platform compatibility
+  # conda's graspologic requires graspologic-native which has no ARM64 build
 
   # Plotting
   - matplotlib
@@ -22,6 +25,8 @@ dependencies:
 
   # Data analysis (notebooks)
   - pandas
+  - jupyterlab
+  - ipykernel
 
   # ML + NLP
   - scikit-learn
@@ -31,8 +36,13 @@ dependencies:
   - pyyaml
   - tqdm
   - pytest
-  - jupyterlab
 
-  # igraph Cairo bindings (cross-platform)
+  # igraph plotting (Cairo)
   - cairo
   - pycairo
+  # Optional fallback if you ever need it:
+  # - cairocffi
+
+  # Pip dependencies (cross-platform compatibility)
+  - pip:
+    - graspologic>=3.3
